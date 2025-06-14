@@ -98,6 +98,8 @@ class _FitLoop(_Loop):
         self._data_fetcher: Optional[_DataFetcher] = None
         self._last_train_dl_reload_epoch = float("-inf")
 
+        self._force_reload_train_dataloader = False
+
     @property
     def total_batch_idx(self) -> int:
         """Returns the current batch index (across epochs)"""
@@ -157,8 +159,13 @@ class _FitLoop(_Loop):
         n_epochs = self.trainer.reload_dataloaders_every_n_epochs
         return n_epochs and self.trainer.current_epoch - self._last_train_dl_reload_epoch >= n_epochs
 
+    def turn_on_force_reload_train_dataloader(self) -> None:
+        self._force_reload_train_dataloader = True
+
     @property
     def done(self) -> bool:
+        if self._force_reload_train_dataloader:
+            return False
         """Evaluates when to leave the loop."""
         if self.max_batches == 0:
             rank_zero_info("`Trainer.fit` stopped: No training batches.")
@@ -201,9 +208,11 @@ class _FitLoop(_Loop):
         self.on_run_start()
         while not self.done:
             try:
+                self._force_reload_train_dataloader = False
                 self.on_advance_start()
                 self.advance()
                 self.on_advance_end()
+                self.setup_data()
                 self._restarting = False
             except StopIteration:
                 break
@@ -211,7 +220,7 @@ class _FitLoop(_Loop):
         self.on_run_end()
 
     def setup_data(self) -> None:
-        if self._combined_loader is not None and not self._should_reload_train_dl:
+        if self._combined_loader is not None and not self._should_reload_train_dl and not self._force_reload_train_dataloader:
             return
 
         trainer = self.trainer
